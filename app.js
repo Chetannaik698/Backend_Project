@@ -7,7 +7,8 @@ const methodOveride = require("method-override");
 const ejsMate = require("ejs-mate"); //use multiple layout
 const wrapAsync = require("./utils/wrapAsync.js");
 const ExpressError = require("./utils/ExpressErr.js");
-const { listingSchema } = require("./schema.js");
+const { listingSchema, reviewSchema } = require('./schema.js');
+const Review = require('./models/review')
 
 app.set("view engine", "ejs");
 app.set("views", path.join(__dirname, "views"));
@@ -17,16 +18,24 @@ app.use(express.static(path.join(__dirname, "/public")));
 app.engine('ejs', ejsMate);
 
 const validateListing = (req, res, next) => {
-  let err = listingSchema.validate(req.body) // if req.body is satisfying all that required conditon in schem li title description etc
-  console.log(result)
-
-  if (errr) {
-    throw new ExpressError(400, result.err)
+  const { error } = listingSchema.validate(req.body); // Check for validation error
+  if (error) {
+    const errMsg = error.details.map((el) => el.message).join(", ");
+    next(new ExpressError(400, errMsg)); // Forward to error handler
   } else {
-    next()
+    next();
   }
+};
 
-}
+const validateReview = (req, res, next) => {
+  const { error } = reviewSchema.validate(req.body); // Check for validation error
+  if (error) {
+    const errMsg = error.details.map((el) => el.message).join(", ");
+    next(new ExpressError(400, errMsg)); // Forward to error handler
+  } else {
+    next();
+  }
+};
 
 main().then(() => {
   console.log("connection successfull")
@@ -38,22 +47,20 @@ async function main() {
 }
 
 //index route
-app.get("/listings", validateListing, wrapAsync(async (req, res) => {
+app.get("/listings", wrapAsync(async (req, res) => { //validateListing is err meassage created by joi for server side database wrong entry an security
   const allListings = await Listing.find({})
   res.render("listings/index", { allListings });
 }));
-
 
 //new route
 app.get("/listings/new", (req, res) => { // this route should be at top of show because it may take it as id
   res.render("listings/new.ejs")
 });
 
-
 //show route
 app.get("/listings/:id", wrapAsync(async (req, res) => {
   let { id } = req.params;
-  const listing = await Listing.findById(id)
+  const listing = await Listing.findById(id).populate("reviews") //populated whole erviews in listing populate means showing
   res.render("listings/show.ejs", { listing })
 }));
 
@@ -100,6 +107,29 @@ app.delete("/listings/:id", wrapAsync(async (req, res) => {
   res.redirect("/listings");
 }));
 
+//reviews
+//Post review route
+app.post("/listings/:id/reviews", validateReview , wrapAsync(async(req, res) => {
+    let listing = await Listing.findById(req.params.id)
+    let newReview = new Review(req.body.review) //there in show route in form we have sent review[rating] and review[comment] that package will be stored
+
+    listing.reviews.push(newReview);
+    await newReview.save();
+    await listing.save();
+
+    res.redirect(`/listings/${listing._id}`)
+}))
+
+//delete review route
+app.delete("/listings/:id/reviews/:reviewid", wrapAsync(async(req,res) => {
+  let {id, reviewid} = req.params;
+  await Listing.findByIdAndUpdate(id, {$pull: {reviews: reviewid}}) //here pull means remove use pdate method and it will delete that reveiw from reviews array from the listing
+  await Review.findByIdAndDelete(reviewid); //here we removing the review from the review database
+
+  res.redirect(`/listings/${id}`)
+}))
+
+
 app.get("/", (req, res) => {
   res.send("Hi, iam home");
 })
@@ -116,5 +146,5 @@ app.use((err, req, res, next) => {
 
 
 app.listen(8080, () => {
-  console.log("Listining to the port 8080")
-})
+  console.log("Listening on port 3000");
+});
